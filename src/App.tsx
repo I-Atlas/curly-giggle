@@ -4,6 +4,8 @@ import AlarmList from "./components/AlarmList";
 import type { Alarm } from "./types";
 import {
   cancelAlarmNotification,
+  checkServiceWorkerRegistration,
+  ensureServiceWorkerRegistered,
   getNotificationPermissionStatus,
   requestNotificationPermission,
   scheduleAlarmNotification,
@@ -16,15 +18,45 @@ function App() {
   const [editing, setEditing] = useState<Alarm | null>(null);
   const [notificationsEnabled, setNotificationsEnabled] =
     useState<boolean>(false);
+  const [serviceWorkerReady, setServiceWorkerReady] = useState<boolean>(false);
+
+  // Инициализация сервис-воркера при загрузке
+  useEffect(() => {
+    const initServiceWorker = async () => {
+      console.log("Initializing service worker");
+      try {
+        // Проверяем, зарегистрирован ли сервис-воркер
+        const isRegistered = await checkServiceWorkerRegistration();
+
+        if (!isRegistered) {
+          console.log("Service worker not registered, registering now");
+          const registered = await ensureServiceWorkerRegistered();
+          setServiceWorkerReady(registered);
+        } else {
+          console.log("Service worker already registered");
+          setServiceWorkerReady(true);
+        }
+      } catch (error) {
+        console.error("Error initializing service worker:", error);
+        setServiceWorkerReady(false);
+      }
+    };
+
+    initServiceWorker();
+  }, []);
 
   // Запрос разрешения на уведомления и проверка статуса
   useEffect(() => {
     const checkNotificationPermission = async () => {
+      console.log("Checking notification permission");
       const status = getNotificationPermissionStatus();
+      console.log("Current notification status:", status);
       setNotificationsEnabled(status === "granted");
 
       if (status !== "granted" && status !== "denied") {
+        console.log("Notification permission not decided, requesting...");
         const granted = await requestNotificationPermission();
+        console.log("Notification permission granted:", granted);
         setNotificationsEnabled(granted);
       }
     };
@@ -34,17 +66,28 @@ function App() {
 
   // Загрузка будильников при монтировании
   useEffect(() => {
+    console.log("Loading alarms from storage");
     const savedAlarms = loadAlarms();
+    console.log("Loaded alarms:", savedAlarms);
     setAlarms(savedAlarms);
 
     // Планируем уведомления для всех активных будильников
-    if (notificationsEnabled) {
+    if (notificationsEnabled && serviceWorkerReady) {
+      console.log(
+        "Service worker ready and notifications enabled, scheduling alarms",
+      );
       scheduleAllAlarmNotifications(savedAlarms);
+    } else {
+      console.log("Cannot schedule notifications:", {
+        notificationsEnabled,
+        serviceWorkerReady,
+      });
     }
-  }, [notificationsEnabled]);
+  }, [notificationsEnabled, serviceWorkerReady]);
 
   // Сохранение будильников при изменении
   useEffect(() => {
+    console.log("Saving alarms to storage:", alarms);
     saveAlarms(alarms);
   }, [alarms]);
 
@@ -77,6 +120,7 @@ function App() {
   }, [alarms, notificationsEnabled]);
 
   const addAlarm = async (alarm: Omit<Alarm, "id">) => {
+    console.log("Adding new alarm:", alarm);
     const newAlarm = {
       ...alarm,
       id: Date.now().toString(),
@@ -85,24 +129,34 @@ function App() {
     setAlarms((prevAlarms) => {
       const updatedAlarms = [...prevAlarms, newAlarm];
       // Планируем уведомление для нового будильника
-      if (notificationsEnabled && newAlarm.active) {
+      if (notificationsEnabled && serviceWorkerReady && newAlarm.active) {
+        console.log("Scheduling notification for new alarm");
         scheduleAlarmNotification(newAlarm);
+      } else {
+        console.log("Not scheduling notification for new alarm:", {
+          notificationsEnabled,
+          serviceWorkerReady,
+          isActive: newAlarm.active,
+        });
       }
       return updatedAlarms;
     });
   };
 
   const updateAlarm = async (updatedAlarm: Alarm) => {
+    console.log("Updating alarm:", updatedAlarm);
     setAlarms((prevAlarms) => {
       const updatedAlarms = prevAlarms.map((alarm) =>
         alarm.id === updatedAlarm.id ? updatedAlarm : alarm,
       );
 
       // Обновляем уведомление для измененного будильника
-      if (notificationsEnabled) {
+      if (notificationsEnabled && serviceWorkerReady) {
         if (updatedAlarm.active) {
+          console.log("Scheduling notification for updated alarm");
           scheduleAlarmNotification(updatedAlarm);
         } else {
+          console.log("Canceling notification for updated alarm");
           cancelAlarmNotification(updatedAlarm.id);
         }
       }
@@ -114,8 +168,10 @@ function App() {
   };
 
   const deleteAlarm = async (id: string) => {
+    console.log("Deleting alarm:", id);
     // Отменяем уведомление для удаляемого будильника
-    if (notificationsEnabled) {
+    if (notificationsEnabled && serviceWorkerReady) {
+      console.log("Canceling notification for deleted alarm");
       await cancelAlarmNotification(id);
     }
 
@@ -123,16 +179,19 @@ function App() {
   };
 
   const toggleAlarm = async (id: string) => {
+    console.log("Toggling alarm:", id);
     setAlarms((prevAlarms) => {
       const updatedAlarms = prevAlarms.map((alarm) => {
         if (alarm.id === id) {
           const updatedAlarm = { ...alarm, active: !alarm.active };
 
           // Обновляем уведомление при изменении статуса
-          if (notificationsEnabled) {
+          if (notificationsEnabled && serviceWorkerReady) {
             if (updatedAlarm.active) {
+              console.log("Scheduling notification for activated alarm");
               scheduleAlarmNotification(updatedAlarm);
             } else {
+              console.log("Canceling notification for deactivated alarm");
               cancelAlarmNotification(id);
             }
           }
@@ -148,12 +207,55 @@ function App() {
 
   // Запрос разрешения на уведомления
   const handleRequestPermission = async () => {
+    console.log("User requested notification permission");
     const granted = await requestNotificationPermission();
+    console.log("Permission request result:", granted);
     setNotificationsEnabled(granted);
 
-    if (granted) {
+    if (granted && serviceWorkerReady) {
+      console.log("Permission granted, scheduling all active alarms");
       // Планируем уведомления для всех активных будильников
       scheduleAllAlarmNotifications(alarms);
+    }
+  };
+
+  // Отладочная функция для проверки работы уведомлений
+  const testNotification = async () => {
+    console.log("Testing notification");
+    try {
+      if (!serviceWorkerReady) {
+        console.log("Service worker not ready, trying to register");
+        await ensureServiceWorkerRegistered();
+      }
+
+      if (Notification.permission !== "granted") {
+        console.log("Notification permission not granted, requesting");
+        const granted = await requestNotificationPermission();
+        if (!granted) {
+          alert("Необходимо разрешить уведомления для теста");
+          return;
+        }
+      }
+
+      // Создаем тестовый будильник через 5 секунд
+      const testAlarm = {
+        id: "test-" + Date.now(),
+        name: "Тестовое уведомление",
+        time: new Date(Date.now() + 5000),
+        active: true,
+      };
+
+      console.log("Scheduling test notification for 5 seconds from now");
+      const result = await scheduleAlarmNotification(testAlarm);
+
+      if (result) {
+        alert("Тестовое уведомление будет показано через 5 секунд");
+      } else {
+        alert("Не удалось запланировать тестовое уведомление");
+      }
+    } catch (error) {
+      console.error("Error testing notification:", error);
+      alert("Ошибка при тестировании уведомления: " + error);
     }
   };
 
@@ -181,6 +283,9 @@ function App() {
             Уведомления разрешены. Будильники будут работать даже если
             приложение закрыто.
           </span>
+          <button className="btn btn-sm" onClick={testNotification}>
+            Проверить
+          </button>
         </div>
       ) : (
         <div className="alert alert-warning mb-4">
