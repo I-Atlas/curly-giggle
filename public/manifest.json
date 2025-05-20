@@ -1,0 +1,14 @@
+{
+  "name": "Pwa Alarm",
+  "short_name": "Pwa Alarm",
+  "description": "Pwa Alarm for testing",
+  "lang": "ru",
+  "dir": "rtl",
+  "categories": ["utilities", "productivity"],
+  "theme_color": "#000000",
+  "background_color": "#000000",
+  "display": "standalone",
+  "scope": "/",
+  "start_url": "/",
+  "orientation": "portrait"
+}
