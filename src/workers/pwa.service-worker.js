@@ -1,7 +1,13 @@
 import { precacheAndRoute } from "workbox-precaching";
 
+// Переменная для отслеживания последнего времени активности
+let lastActivityTime = Date.now();
+
 self.addEventListener("message", (event) => {
   console.log("Service worker received message:", event.data);
+
+  // Обновление времени последней активности при любом сообщении
+  lastActivityTime = Date.now();
 
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
@@ -19,6 +25,25 @@ self.addEventListener("message", (event) => {
     const alarmId = event.data.alarmId;
     console.log("Canceling alarm notification:", alarmId);
     cancelAlarmNotification(alarmId);
+  }
+
+  // Обработка пинг-сообщения для поддержания активности
+  if (event.data && event.data.type === "KEEP_ALIVE_PING") {
+    console.log(
+      "Received keep-alive ping at:",
+      new Date().toLocaleTimeString(),
+    );
+
+    // Отвечаем на пинг, чтобы подтвердить, что SW активен
+    if (event.source) {
+      event.source.postMessage({
+        type: "KEEP_ALIVE_PONG",
+        timestamp: Date.now(),
+      });
+    }
+
+    // Проверяем все запланированные будильники и обновляем их статус
+    refreshAlarmTimeouts();
   }
 });
 
@@ -65,6 +90,35 @@ self.addEventListener("notificationclick", (event) => {
 // Хранилище для запланированных будильников (id: timeoutId)
 const scheduledAlarms = new Map();
 
+// Функция для повторной проверки и обновления таймеров всех будильников
+function refreshAlarmTimeouts() {
+  console.log("Refreshing all alarm timeouts");
+
+  if (scheduledAlarms.size === 0) {
+    console.log("No alarms to refresh");
+    return;
+  }
+
+  // Временный массив для хранения данных будильников
+  const alarmsToReschedule = [];
+
+  // Собираем данные будильников и очищаем старые таймеры
+  for (const [alarmId, data] of scheduledAlarms.entries()) {
+    if (data.alarm) {
+      clearTimeout(data.timeoutId);
+      alarmsToReschedule.push(data.alarm);
+      console.log(`Cleared timeout for alarm: ${alarmId}`);
+    }
+  }
+
+  // Перепланируем все будильники
+  for (const alarm of alarmsToReschedule) {
+    scheduleAlarmNotification(alarm);
+  }
+
+  console.log(`Refreshed ${alarmsToReschedule.length} alarm timeouts`);
+}
+
 // Функция для планирования уведомления будильника
 function scheduleAlarmNotification(alarm) {
   // Отмена предыдущего таймера, если он существует
@@ -95,14 +149,21 @@ function scheduleAlarmNotification(alarm) {
     scheduledAlarms.delete(alarm.id);
   }, delay);
 
-  scheduledAlarms.set(alarm.id, timeoutId);
+  // Сохраняем ссылку на таймер и данные будильника
+  scheduledAlarms.set(alarm.id, {
+    timeoutId: timeoutId,
+    alarm: alarm,
+    scheduledTime: alarmTime,
+  });
+
   console.log("Scheduled alarms count:", scheduledAlarms.size);
 }
 
 // Функция для отмены запланированного уведомления
 function cancelAlarmNotification(alarmId) {
   if (scheduledAlarms.has(alarmId)) {
-    clearTimeout(scheduledAlarms.get(alarmId));
+    const data = scheduledAlarms.get(alarmId);
+    clearTimeout(data.timeoutId);
     scheduledAlarms.delete(alarmId);
     console.log("Alarm canceled for:", alarmId);
     console.log("Remaining scheduled alarms:", scheduledAlarms.size);
@@ -126,7 +187,7 @@ function showNotification(alarm) {
     self.registration
       .showNotification("Будильник", {
         body: alarm.name,
-        icon: "/icon-192x192.png", // Убедитесь, что этот файл существует в вашем проекте
+        icon: "/icon-192x192.png",
         tag: alarm.id,
         requireInteraction: true,
         vibrate: [200, 100, 200, 100, 200, 100, 400],
@@ -147,3 +208,30 @@ function showNotification(alarm) {
     console.error("Exception showing notification:", error);
   }
 }
+
+// Периодическая самопроверка для iOS (проверяем наличие "засыпания")
+setInterval(() => {
+  const now = Date.now();
+  const timeSinceLastActivity = now - lastActivityTime;
+
+  console.log(
+    `Self-check: Time since last activity: ${timeSinceLastActivity}ms`,
+  );
+
+  // Если прошло больше 30 секунд с последней активности, проверяем будильники
+  if (timeSinceLastActivity > 30000) {
+    console.log("Long time since last activity, refreshing alarms");
+    lastActivityTime = now;
+    refreshAlarmTimeouts();
+  }
+
+  // Проверяем, не пропустили ли мы какие-то будильники из-за "засыпания"
+  for (const [alarmId, data] of scheduledAlarms.entries()) {
+    if (data.scheduledTime <= now) {
+      console.log(`Detected missed alarm during self-check: ${alarmId}`);
+      // Показываем уведомление для пропущенного будильника
+      showNotification(data.alarm);
+      scheduledAlarms.delete(alarmId);
+    }
+  }
+}, 25000); // Проверка каждые 25 секунд
