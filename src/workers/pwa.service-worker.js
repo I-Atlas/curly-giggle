@@ -24,6 +24,12 @@ self.addEventListener("install", () => {
   self.skipWaiting();
 });
 
+const manifest = self.__WB_MANIFEST.filter((entry) => {
+  return !entry.url.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i);
+});
+
+precacheAndRoute(manifest);
+
 // Обработчик уведомлений - когда пользователь нажимает на уведомление
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

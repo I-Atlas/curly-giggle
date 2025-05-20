@@ -20,12 +20,14 @@ export default defineConfig({
       },
       includeAssets: ["**/*"],
       workbox: {
-        globDirectory: "build",
+        globDirectory: "dist",
         globPatterns: ["**/*"],
         maximumFileSizeToCacheInBytes: 20 * 1024 * 1024, // 20 MB limit
       },
       injectManifest: {
         maximumFileSizeToCacheInBytes: 20 * 1024 * 1024, // 20 MB limit
+        globDirectory: "dist",
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,jpg,jpeg}"],
       },
       manifest: {
         name: "Pwa Alarm",
@@ -37,6 +39,18 @@ export default defineConfig({
         scope: "/",
         start_url: "/",
         orientation: "portrait",
+        icons: [
+          {
+            src: "/icon-192x192.png",
+            sizes: "192x192",
+            type: "image/png",
+          },
+          {
+            src: "/icon-512x512.png",
+            sizes: "512x512",
+            type: "image/png",
+          },
+        ],
       },
     }),
   ],
